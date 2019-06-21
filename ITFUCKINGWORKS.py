@@ -4,7 +4,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import datetime
+
 base_dir = "/home/tiina/vegetables/webcam"
 
 
@@ -56,9 +56,8 @@ base_model = tf.keras.applications.MobileNetV2(input_shape=IMG_SHAPE,
 base_model.trainable = False
 model = tf.keras.Sequential([
   base_model,
-  tf.keras.layers.Conv2D(32 ,3,  activation='relu'),
-  tf.keras.layers.Dropout(0.5),
-  tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.GlobalAveragePooling2D(),
   tf.keras.layers.Dense(25, activation='softmax')
 ])
 model.compile(optimizer=tf.keras.optimizers.Adam(), 
@@ -69,22 +68,12 @@ model.summary()
 
 print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
 
-epochs = 12
+epochs = 30
 
-es= EarlyStopping(
-        #stop training when `val_loss` is no longer improving
-        monitor='val_loss',
-        # "no longer improving" being defined as "no better than 1e-2 less"
-        min_delta=1e-2,
-        # "no longer improving" being further defined as "for at least 2 epochs"
-        patience=4,
-        verbose=1)
-
-log_dir="logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+es= EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
 
 history = model.fit(train_generator, 
-                    epochs=epochs, callbacks=[es, tensorboard_callback],
+                    epochs=epochs, callbacks=[es],
                     validation_data=val_generator)
 
 acc = history.history['accuracy']
@@ -117,7 +106,7 @@ saved_model_dir = 'save/fine_tuning_own1'
 tf.saved_model.save(model, saved_model_dir)
 
 
-'''
+
 base_model.trainable = True
 
 # Let's take a look to see how many layers are in the base model
@@ -144,7 +133,7 @@ history_fine = model.fit(train_generator,
 
 saved_model_dir = 'save/fine_tuning_own'
 tf.saved_model.save(model, saved_model_dir)
-'''
+
 converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
 tflite_model = converter.convert()
 

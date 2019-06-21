@@ -16,7 +16,7 @@ base_dir = "/home/tiina/vegetables/webcam"
 
 IMAGE_SIZE = 224
 BATCH_SIZE = 32
-
+epochs = 15
 datagen = tf.keras.preprocessing.image.ImageDataGenerator(
     rescale=1./255, 
     validation_split=0.2)
@@ -56,9 +56,8 @@ base_model = tf.keras.applications.MobileNetV2(input_shape=IMG_SHAPE,
 base_model.trainable = False
 model = tf.keras.Sequential([
   base_model,
-  tf.keras.layers.Conv2D(16 ,3,  activation='relu'),
-  tf.keras.layers.Dropout(0.1),
-  tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.GlobalAveragePooling2D(),
   tf.keras.layers.Dense(25, activation='softmax')
 ])
 model.compile(optimizer=tf.keras.optimizers.Adam(), 
@@ -69,16 +68,9 @@ model.summary()
 
 print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
 
-epochs = 12
 
-es= EarlyStopping(
-        #stop training when `val_loss` is no longer improving
-        monitor='val_loss',
-        # "no longer improving" being defined as "no better than 1e-2 less"
-        min_delta=1e-2,
-        # "no longer improving" being further defined as "for at least 2 epochs"
-        patience=2,
-        verbose=1)
+
+es= EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
 
 history = model.fit(train_generator, 
                     epochs=epochs, callbacks=[es],
@@ -89,7 +81,7 @@ val_acc = history.history['val_accuracy']
 
 loss = history.history['loss']
 val_loss = history.history['val_loss']
-
+''''Plotting loss and accurace'''
 plt.figure(figsize=(8, 8))
 plt.subplot(2, 1, 1)
 plt.plot(acc, label='Training Accuracy')
@@ -109,12 +101,16 @@ plt.title('Training and Validation Loss')
 plt.xlabel('epoch')
 plt.show()
 plt.savefig('21_own.png')
-saved_model_dir = 'save/fine_tuning_own1'
+#saved_model_dir = 'save/before_fine_tuning'
 
-tf.saved_model.save(model, saved_model_dir)
+#tf.saved_model.save(model, saved_model_dir)
+model.save('try.h5')
+loaded=tf.keras.models.load_model('try.h5')
 
+loaded.compile(optimizer=tf.keras.optimizers.Adam(),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-'''
 base_model.trainable = True
 
 # Let's take a look to see how many layers are in the base model
@@ -138,12 +134,24 @@ print('Number of trainable variables = {}'.format(len(model.trainable_variables)
 history_fine = model.fit(train_generator, 
                          epochs=2,
                          validation_data=val_generator)
+model.save('try2.h5')
+loaded2=tf.keras.models.load_model('try2.h5')
 
+loaded2.compile(optimizer=tf.keras.optimizers.Adam(),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
+
+
+'''
 saved_model_dir = 'save/fine_tuning_own'
 tf.saved_model.save(model, saved_model_dir)
-'''
+tf.saved_model.load('save/fine_tuning_own')
+model.compile(loss='categorical_crossentropy',
+              optimizer = tf.keras.optimizers.Adam(1e-5),
+              metrics=['accuracy'])
 converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
 tflite_model = converter.convert()
 
 with open('model_own2.tflite', 'wb') as f:
   f.write(tflite_model)
+'''
