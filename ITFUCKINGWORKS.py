@@ -1,21 +1,29 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import ModelCheckpoint
 import os
 import numpy as np
-import matplotlib.pyplot as plt
+import tools
+import argparse
+print(tf.__version__)
+import argparse
+import datetime
+import pandas as pd
 
-base_dir = "/home/tiina/vegetables/webcam"
+default_file_name = datetime.datetime.now().strftime("%d%m%H%M")
+save_time = datetime.datetime.now().strftime("%d.%m, %H:%M")
+parser = argparse.ArgumentParser()
+parser.add_argument('--name', default=default_file_name)
+args = parser.parse_args()
+file_name= args.name
 
-
-#_URL = "https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz"
-
-#zip_file = tf.keras.utils.get_file(origin=_URL, fname="flower_photos.tgz", extract=True)
-
-#base_dir = os.path.join(os.path.dirname(zip_file), 'flower_photos')
-
+base_dir = "/home/tiina/vegetables/dataset2"
 IMAGE_SIZE = 224
 BATCH_SIZE = 32
+epochs = 100
+optimizer_epochs=100
+
 
 datagen = tf.keras.preprocessing.image.ImageDataGenerator(
     rescale=1./255, 
@@ -38,12 +46,11 @@ for image_batch, label_batch in train_generator:
   break
 image_batch.shape, label_batch.shape
 
-
 print (train_generator.class_indices)
-
+number_of_categories=len(train_generator.class_indices.keys())
 labels = '\n'.join(sorted(train_generator.class_indices.keys()))
 
-with open('labels_own.txt', 'w') as f:
+with open('labels.txt', 'w') as f:
   f.write(labels)
 
 IMG_SHAPE = (IMAGE_SIZE, IMAGE_SIZE, 3)
@@ -56,56 +63,37 @@ base_model = tf.keras.applications.MobileNetV2(input_shape=IMG_SHAPE,
 base_model.trainable = False
 model = tf.keras.Sequential([
   base_model,
+  # tf.keras.layers.Conv2D(32, 3, activation='relu'),
+
     tf.keras.layers.Dropout(0.2),
     tf.keras.layers.GlobalAveragePooling2D(),
-  tf.keras.layers.Dense(25, activation='softmax')
+  tf.keras.layers.Dense(number_of_categories, activation='softmax')
 ])
-model.compile(optimizer=tf.keras.optimizers.Adam(), 
-              loss='categorical_crossentropy', 
+loss_function='categorical_crossentropy'
+optimizer=tf.keras.optimizers.Adam()
+model.compile(optimizer=optimizer,
+              loss=loss_function,
               metrics=['accuracy'])
 
 model.summary()
 
 print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
-
-epochs = 30
-
-es= EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
+stopping_condition='val_loss'
+stopping_patience=13
+es= EarlyStopping(monitor=stopping_condition, mode='min', verbose=1, patience=stopping_patience)
+bm = ModelCheckpoint("best_models/"+file_name, monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
 
 history = model.fit(train_generator, 
                     epochs=epochs, callbacks=[es],
                     validation_data=val_generator)
 
 acc = history.history['accuracy']
-val_acc = history.history['val_accuracy']
+val_accuracy = history.history['val_accuracy']
 
 loss = history.history['loss']
 val_loss = history.history['val_loss']
 
-plt.figure(figsize=(8, 8))
-plt.subplot(2, 1, 1)
-plt.plot(acc, label='Training Accuracy')
-plt.plot(val_acc, label='Validation Accuracy')
-plt.legend(loc='lower right')
-plt.ylabel('Accuracy')
-plt.ylim([min(plt.ylim()),1])
-plt.title('Training and Validation Accuracy')
-
-plt.subplot(2, 1, 2)
-plt.plot(loss, label='Training Loss')
-plt.plot(val_loss, label='Validation Loss')
-plt.legend(loc='upper right')
-plt.ylabel('Cross Entropy')
-plt.ylim([0,1.0])
-plt.title('Training and Validation Loss')
-plt.xlabel('epoch')
-plt.show()
-plt.savefig('21_own.png')
-saved_model_dir = 'save/fine_tuning_own1'
-
-tf.saved_model.save(model, saved_model_dir)
-
-
+tools.plot_acc_loss(history, file_name)
 
 base_model.trainable = True
 
@@ -118,24 +106,37 @@ fine_tune_at = 100
 # Freeze all the layers before the `fine_tune_at` layer
 for layer in base_model.layers[:fine_tune_at]:
   layer.trainable =  False
-
-model.compile(loss='categorical_crossentropy',
-              optimizer = tf.keras.optimizers.Adam(1e-5),
+opt_learning_rate=1e-5
+model.compile(loss=loss_function,
+              optimizer = tf.keras.optimizers.Adam(opt_learning_rate),
               metrics=['accuracy'])
-
 model.summary()
 
 print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
 
 history_fine = model.fit(train_generator, 
-                         epochs=2,
+                         epochs=optimizer_epochs,
+                         callbacks=[es],
                          validation_data=val_generator)
 
-saved_model_dir = 'save/fine_tuning_own'
-tf.saved_model.save(model, saved_model_dir)
+tools.plot_acc_loss(history_fine, file_name+'_optimized')
 
-converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
-tflite_model = converter.convert()
+'''Save optimized model in Keras format for re-training'''
+'''
+model.save('keras_models/' +file_name+'_retrained' +'.h5')
+tools.convert_to_tf(file_name+'_retrained', model)
+tools.convert_to_tf(file_name, model)
+'''
+table=pd.read_pickle('train_table1')
 
-with open('model_own2.tflite', 'wb') as f:
-  f.write(tflite_model)
+table = table.append(pd.Series([file_name, save_time, min(history_fine.history['val_loss']),
+              max(history_fine.history['val_accuracy']),   history_fine.history['val_loss'][-1],
+              history_fine.history['val_accuracy'][-1],  min(history.history['val_loss']),
+              max(history.history['val_accuracy']),  history.history['val_loss'][-1], history.history['val_accuracy'][-1],
+              base_dir, 'new_model',   epochs,  BATCH_SIZE, stopping_condition, stopping_patience,
+              optimizer, 'default_lr', loss_function,  optimizer_epochs,  BATCH_SIZE,
+              stopping_condition,  stopping_patience, optimizer,
+              tf.keras.backend.eval(model.optimizer.lr), loss_function], index=table.columns ), ignore_index=True)
+
+table.to_pickle('train_table1')
+table.to_csv('trained_table.csv')
