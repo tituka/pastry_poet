@@ -3,9 +3,10 @@ matplotlib.use('Agg')
 import matplotlib.pylab as plt
 import shutil
 import tensorflow as tf
+import os
 
 
-def plot_acc_loss(mhistory, mname):
+def plot_acc_loss(mhistory, mname, delete_all=False):
     acc = mhistory.history['accuracy']
     val_acc = mhistory.history['val_accuracy']
     loss = mhistory.history['loss']
@@ -34,9 +35,13 @@ def plot_acc_loss(mhistory, mname):
     plt.xlabel('epoch')
     plt.show()
     plt.savefig('graphs/' +'al_'+mname+ '.png')
+    if delete_all:
+        os.remove('graphs/' +'al_'+mname+ '.png')
 
 
-def convert_to_tf(save_file_name, model, delete_pb_model=True, save_converted=True):
+
+
+def convert_to_tf(save_file_name, model, delete_pb_model=True, save_converted=True, delete_all=False):
     saved_model_dir = 'pb_for_tf_models/' + save_file_name
     tf.saved_model.save(model, saved_model_dir)
     converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
@@ -46,4 +51,6 @@ def convert_to_tf(save_file_name, model, delete_pb_model=True, save_converted=Tr
           f.write(tflite_model)
     if delete_pb_model:
         shutil.rmtree('pb_for_tf_models/' + save_file_name)
+    if delete_all:
+        os.remove('tflite_models/'+ save_file_name+'.tflite')
     return tflite_model
