@@ -21,9 +21,9 @@ start_time=time.time()
 default_file_name = datetime.datetime.now().strftime("%d%m%H%M")
 save_time = datetime.datetime.now().strftime("%d.%m, %H:%M")
 parser = argparse.ArgumentParser()
-parser.add_argument('--name', default=default_file_name)
-parser.add_argument("--from_dir", action="store_true")
-parser.add_argument('--source_dir', default="/home/tiina/vegetables/just_webcam")
+parser.add_argument('--name', default=default_file_name, help='Save files with name')
+parser.add_argument("--from_dir", action="store_true", help='Load classes from separate directories')
+parser.add_argument('--source_dir', default="/home/tiina/vegetables/just_webcam", help='Source directory for images')
 parser.add_argument('--epochs', default=10, type=int)
 parser.add_argument('--ft_epochs', default=2, type=int)
 parser.add_argument('--batch', default=16, type=int)
@@ -32,6 +32,8 @@ parser.add_argument('--ft_sp', default=5, type=int)
 parser.add_argument('--s_cond', default='val_loss')
 parser.add_argument('--ft_s_cond', default='val_loss')
 parser.add_argument("--dlt_all", action="store_true")
+parser.add_argument("--c", action="store_true")
+
 
 
 args = parser.parse_args()
@@ -55,6 +57,7 @@ IMAGE_SIZE = 224
 IMG_SHAPE = (IMAGE_SIZE, IMAGE_SIZE, 3)
 loss_function='categorical_crossentropy'
 FROM_DIR=args.from_dir
+TRAIN_CATEGORIES=args.c
 print(FROM_DIR)
 
 if STOPPING_CONDITION=='val_loss':
@@ -66,7 +69,10 @@ if FT_STOPPING_CONDITION == 'val_loss':
     FT_STOPPING_MODE = 'min'
 else:
     FT_STOPPING_MODE = 'max'
-
+if c:
+    col='category'
+else:
+    col='product'
 
 datagen = tf.keras.preprocessing.image.ImageDataGenerator(
     rescale=1./255,
@@ -93,7 +99,7 @@ else:
         dataframe=table,
         directory='/home/tiina/vegetables/all_in_one/',
         x_col="file name",
-        y_col="category",
+        y_col=col,
         has_ext=True, subset="training",
         class_mode="categorical",
         batch_size=BATCH_SIZE,
@@ -103,12 +109,13 @@ else:
         dataframe=table,
         directory='/home/tiina/vegetables/all_in_one/',
         x_col="file name",
-        y_col="category",
+        y_col=col,
         class_mode="categorical",
 
         has_ext=True, subset="validation",
         batch_size=BATCH_SIZE,
         target_size=(IMAGE_SIZE, IMAGE_SIZE))
+
 
 for image_batch, label_batch in train_generator:
   image_batch.shape, label_batch.shape
@@ -147,7 +154,7 @@ model.summary()
 print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
 
 es= EarlyStopping(monitor=STOPPING_CONDITION, mode=STOPPING_MODE, verbose=1, patience=STOPPING_PATIENCE)
-bm = ModelCheckpoint("best_models/"+FILE_NAME, monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
+bm = ModelCheckpoint("best_models/"+FILE_NAME, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
 
 history = model.fit(train_generator,
                     epochs=EPOCHS, callbacks=[es],
