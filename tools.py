@@ -83,50 +83,34 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
     FT_STOPPING_PATIENCE = ft_patience
     BATCH_SIZE=16
     loss_function = 'categorical_crossentropy'
-    '''
+
     datagen = tf.keras.preprocessing.image.ImageDataGenerator(
         rescale=1. / 255,
         validation_split=0.2)
-    '''
+
     table = dataframe
     if train_categories:
         column='category'
     else:
         column='product'
 
-    test_sample_num = int(len(table) * .2)
-    test_sample = table.sample(test_sample_num)
-    table = table.drop(test_sample.index.values)
-    test_sample.to_csv('sample_shuffled.csv')
-    table.to_csv('table_shuffled.csv')
-
-    train_datagen = tf.keras.preprocessing.image.ImageDataGenerator(
-        rotation_range=0,
-        width_shift_range=0.2,
-        height_shift_range=0.2,
-        shear_range=0.2,
-        zoom_range=0.2,
-        horizontal_flip=True,
-        fill_mode='nearest',
-        validation_split=0.2)
-    test_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1. / 255)
-    train_generator = train_datagen.flow_from_dataframe(
+    train_generator = datagen.flow_from_dataframe(
         dataframe=table,
         directory=image_dir,
         x_col="file name",
         y_col=column,
-        has_ext=True,
+        has_ext=True, subset="training",
         class_mode="categorical",
         batch_size=BATCH_SIZE,
         target_size=(IMAGE_SIZE, IMAGE_SIZE))
 
-    val_generator = test_datagen.flow_from_dataframe(
-        dataframe=test_sample,
+    val_generator = datagen.flow_from_dataframe(
+        dataframe=table,
         directory=image_dir,
         x_col="file name",
         y_col=column,
         class_mode="categorical",
-        has_ext=True,
+        has_ext=True, subset="validation",
         batch_size=BATCH_SIZE,
         target_size=(IMAGE_SIZE, IMAGE_SIZE))
 
