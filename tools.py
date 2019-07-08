@@ -10,13 +10,16 @@ import shutil
 import tensorflow as tf
 import os
 import numpy as np
+import logging
+
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 def plot_acc_loss(mhistory, mname, delete_all=False):
-    acc = mhistory.history['accuracy']
-    val_acc = mhistory.history['val_accuracy']
+
+    acc = mhistory.history['acc']
+    val_acc = mhistory.history['val_acc']
     loss = mhistory.history['loss']
     val_loss = mhistory.history['val_loss']
 
@@ -65,10 +68,11 @@ def convert_to_tf(save_file_name, model, delete_pb_model=True, save_converted=Tr
         shutil.rmtree('pb_for_tf_models/' + save_file_name)
     if delete_all:
         os.remove('tflite_models/'+ save_file_name+'.tflite')
-    return tflite_model
 
-def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, patience=2, ft_patience=2, train_categories=False, old_dir=None):
+def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, patience=2, ft_patience=2,
+          train_categories=False, old_dir=None):
     start_time=time.time()
+    log_and_print('testing')
     if name==None:
         FILE_NAME = datetime.datetime.now().strftime("%d%m%H%M")
     else:
@@ -152,19 +156,27 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
 
     model.compile(optimizer=optimizer,
                   loss=loss_function,
-                  metrics=['accuracy'])
+                  metrics=['acc'])
 
     model.summary()
+    sys.exit()
+
     print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
 
     from tensorflow_core.python.keras.callbacks import ModelCheckpoint, EarlyStopping
 
     es = EarlyStopping(monitor=STOPPING_CONDITION, mode='min', verbose=1, patience=STOPPING_PATIENCE)
-    bm = ModelCheckpoint(make_sub_dir(category, 'best_models')+'first_phase', monitor='val_accuracy', verbose=1,
+    bm = ModelCheckpoint(make_sub_dir(category, 'best_models')+'first_phase', monitor='val_acc', verbose=1,
                          save_best_only=True, mode='max')
     history = model.fit(train_generator,
                         epochs=EPOCHS, callbacks=[es],
                         validation_data=val_generator)
+    print(history.history['acc'])
+    print(history.history['loss'])
+    print(history.history['val_acc'])
+    print(history.history['val_loss'])
+
+
 
     tf.saved_model.save(model, (make_sub_dir(category, 'saved_bp')))
     plot_acc_loss(history, name + '_' + category)
@@ -183,12 +195,12 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
     opt_learning_rate = 1e-5
     model.compile(loss=loss_function,
                   optimizer=tf.keras.optimizers.Adam(opt_learning_rate),
-                  metrics=['accuracy'])
+                  metrics=['acc'])
 
     model.summary()
     print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
 
-    bm_ft = ModelCheckpoint(make_sub_dir(category, 'best_models'), monitor='val_accuracy',
+    bm_ft = ModelCheckpoint(make_sub_dir(category, 'best_models'), monitor='val_acc',
                          verbose=1, save_best_only=True, mode='max')
 
     ft_es = EarlyStopping(monitor=FT_STOPPING_CONDITION, mode='min', verbose=1, patience=FT_STOPPING_PATIENCE)
@@ -202,9 +214,6 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
     '''Save optimized model in Keras format for re-training'''
 
     model.save(make_sub_dir(category, 'keras_models') + FILE_NAME + '.h5')
-
-    convert_to_tf(FILE_NAME, model)
-
     layers_string = ', '.join([layer.name for layer in model.layers])
 
     tbl_path='tables/'+ category + '.csv'
@@ -222,10 +231,10 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
        'training time'])
 
     table = table.append(pd.Series([FILE_NAME, train_time, min(history_fine.history['val_loss']),
-                                    max(history_fine.history['val_accuracy']), history_fine.history['val_loss'][-1],
-                                    history_fine.history['val_accuracy'][-1], min(history.history['val_loss']),
-                                    max(history.history['val_accuracy']), history.history['val_loss'][-1],
-                                    history.history['val_accuracy'][-1],
+                                    max(history_fine.history['val_acc']), history_fine.history['val_loss'][-1],
+                                    history_fine.history['val_acc'][-1], min(history.history['val_loss']),
+                                    max(history.history['val_acc']), history.history['val_loss'][-1],
+                                    history.history['val_acc'][-1],
                                     image_dir, 'new_model', EPOCHS, BATCH_SIZE, STOPPING_CONDITION, STOPPING_PATIENCE,
                                     str(optimizer), 'default_lr', loss_function, FT_EPOCHS, BATCH_SIZE,
                                     FT_STOPPING_CONDITION, FT_STOPPING_PATIENCE, str(optimizer),
@@ -308,7 +317,7 @@ def train_multi(name, dataframe, image_dir, eepochs=12, ft_epochs=12, patience=5
     output2 = Dense(1, activation='sigmoid')(x)
     model = Model(inp, [output1, output2])
     model.compile(optimizers.RMSprop(lr=0.0001, decay=1e-6),
-                  loss=["binary_crossentropy", "binary_crossentropy"], metrics=["accuracy"])
+                  loss=["binary_crossentropy", "binary_crossentropy"], metrics=["acc", "val_loss"])
 
     classes = train_generator.class_indices.keys()
     labels = '\n'.join(sorted(classes))
@@ -363,13 +372,17 @@ def compare_models(image_dir, test_sample, labels, prod_or_cat, model1, model2=N
         pred_classes1.append(np.argmax(pred))
     right1 = 0
     for n in range(len(predictions1)):
+        print(len(labels))
+        print(len(sample_labels))
+        print(len(pred_classes1))
+
         if sample_labels[n] == labels[pred_classes1[n]]:
             right1 += 1
-    accuracy1 = right1 / len(products)
+    acc1 = right1 / len(products)
 
     if model2 is None:
         print('no old model found')
-        accuracy2 = 100
+        acc2 = 100
     else:
         print('old model found')
         predictions2 = model2.predict_generator(test_generator)
@@ -382,10 +395,10 @@ def compare_models(image_dir, test_sample, labels, prod_or_cat, model1, model2=N
             if sample_labels[n] == labels[pred_classes2[n]]:
                 right2 += 1
 
-        accuracy2 = right2 / len(products)
-        print(accuracy1)
-        print(accuracy2)
-    return(accuracy1, accuracy2)
+        acc2 = right2 / len(products)
+        print(acc1)
+        print(acc2)
+    return(acc1, acc2)
 
 def copy_and_overwrite(from_path, to_path):
     if os.path.exists(to_path):
@@ -415,3 +428,7 @@ def check_labels_models(thing, models_dir, labels_dir):
         labels_loaded = False
 
     return model_exists and labels_loaded, unique_labels
+
+def log_and_print(message):
+    print(message)
+    logging.debug(message)
