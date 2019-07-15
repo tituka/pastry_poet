@@ -1,3 +1,4 @@
+import logging
 import datetime
 import time
 import datetime
@@ -10,8 +11,6 @@ import shutil
 import tensorflow as tf
 import os
 import numpy as np
-import logging
-
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -68,11 +67,15 @@ def convert_to_tf(save_file_name, model, delete_pb_model=True, save_converted=Tr
         shutil.rmtree('pb_for_tf_models/' + save_file_name)
     if delete_all:
         os.remove('tflite_models/'+ save_file_name+'.tflite')
+    del converter
+    del tflite_model
+
 
 def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, patience=2, ft_patience=2,
           train_categories=False, old_dir=None):
+
     start_time=time.time()
-    log_and_print('testing')
+
     if name==None:
         FILE_NAME = datetime.datetime.now().strftime("%d%m%H%M")
     else:
@@ -145,10 +148,12 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
         model = tf.keras.Sequential([
             base_model,
             #tf.keras.layers.Conv2D(32, 3, activation='relu'),
-            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.GlobalAveragePooling2D(),
             tf.keras.layers.Dense(number_of_categories, activation='softmax')
         ])
+
+
     else:
         model = tf.keras.models.load_model(old_dir)
         base_model = model.get_layer('mobilenetv2_1.00_224')
@@ -159,29 +164,32 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
                   metrics=['acc'])
 
     model.summary()
-    sys.exit()
 
     print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
 
-    from tensorflow_core.python.keras.callbacks import ModelCheckpoint, EarlyStopping
+    from tensorflow_core.python.keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard
+
+    logdir = "logs/tv_test_1/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    tensorboard_callback = TensorBoard(log_dir=logdir + category, update_freq='batch')
 
     es = EarlyStopping(monitor=STOPPING_CONDITION, mode='min', verbose=1, patience=STOPPING_PATIENCE)
     bm = ModelCheckpoint(make_sub_dir(category, 'best_models')+'first_phase', monitor='val_acc', verbose=1,
                          save_best_only=True, mode='max')
     history = model.fit(train_generator,
-                        epochs=EPOCHS, callbacks=[es],
+                        epochs=EPOCHS, callbacks=[es, tensorboard_callback],
                         validation_data=val_generator)
-    print(history.history['acc'])
-    print(history.history['loss'])
-    print(history.history['val_acc'])
-    print(history.history['val_loss'])
+    layers_string = ', '.join([layer.name for layer in model.layers])
+
+    one_min_loss= min(history.history['val_loss'])
+    one_max_acc=max(history.history['val_acc']),
+    one_lass_acc = history.history['val_loss'][-1]
+    one_last_loss = history.history['val_acc'][-1],
+    learning_rate=str(tf.keras.backend.eval(model.optimizer.lr))
 
 
 
     tf.saved_model.save(model, (make_sub_dir(category, 'saved_bp')))
-    plot_acc_loss(history, name + '_' + category)
-
-
+    #plot_acc_loss(history, name + '_' + category)
 
     base_model = model.get_layer('mobilenetv2_1.00_224')
     base_model.trainable = True
@@ -199,6 +207,9 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
 
     model.summary()
     print('Number of trainable variables = {}'.format(len(model.trainable_variables)))
+    logdir = "logs/tv_test_2/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    tensorboard_callback_ft = TensorBoard(log_dir=logdir + '/' +category, update_freq='batch')
 
     bm_ft = ModelCheckpoint(make_sub_dir(category, 'best_models'), monitor='val_acc',
                          verbose=1, save_best_only=True, mode='max')
@@ -206,16 +217,22 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
     ft_es = EarlyStopping(monitor=FT_STOPPING_CONDITION, mode='min', verbose=1, patience=FT_STOPPING_PATIENCE)
     history_fine = model.fit(train_generator,
                              epochs=FT_EPOCHS,
-                             callbacks=[ft_es, bm_ft],
+                             callbacks=[ft_es, bm_ft, tensorboard_callback_ft],
                              validation_data=val_generator)
+    del val_generator
+    del train_generator
+    del dataframe
+
     train_time = time.time() - start_time
     plot_acc_loss(history_fine, 'ft_'+ FILE_NAME + '_' + category)
 
     '''Save optimized model in Keras format for re-training'''
-
     model.save(make_sub_dir(category, 'keras_models') + FILE_NAME + '.h5')
-    layers_string = ', '.join([layer.name for layer in model.layers])
-
+    two_min_loss = min(history_fine.history['val_loss'])
+    two_max_acc = max(history_fine.history['val_acc'])
+    two_last_loss = history_fine.history['val_loss'][-1],
+    two_last_acc = history_fine.history['val_acc'][-1]
+    del history_fine
     tbl_path='tables/'+ category + '.csv'
     if os.path.isfile(tbl_path):
         table = pd.read_csv(tbl_path, index_col=0)
@@ -230,17 +247,16 @@ def train(dataframe, image_dir, category, name=None, epochs=3, ft_epochs=3, pati
        'opt_stop_p', 'opt_optimizer', 'opt_lr', 'opt_loss_f', 'layers',
        'training time'])
 
-    table = table.append(pd.Series([FILE_NAME, train_time, min(history_fine.history['val_loss']),
-                                    max(history_fine.history['val_acc']), history_fine.history['val_loss'][-1],
-                                    history_fine.history['val_acc'][-1], min(history.history['val_loss']),
-                                    max(history.history['val_acc']), history.history['val_loss'][-1],
-                                    history.history['val_acc'][-1],
+    table = table.append(pd.Series([FILE_NAME, train_time, two_min_loss, two_max_acc, two_last_loss, two_last_acc,
+                                    one_min_loss, one_max_acc, one_lass_acc, one_last_loss,
                                     image_dir, 'new_model', EPOCHS, BATCH_SIZE, STOPPING_CONDITION, STOPPING_PATIENCE,
                                     str(optimizer), 'default_lr', loss_function, FT_EPOCHS, BATCH_SIZE,
-                                    FT_STOPPING_CONDITION, FT_STOPPING_PATIENCE, str(optimizer),
-                                    str(tf.keras.backend.eval(model.optimizer.lr)), loss_function, layers_string,
+                                    FT_STOPPING_CONDITION, FT_STOPPING_PATIENCE, str(optimizer),learning_rate
+                                    , loss_function, layers_string,
                                     train_time], index=table.columns ), ignore_index=True)
+
     table.to_csv(tbl_path)
+    del table
     return model
 
 
@@ -261,31 +277,42 @@ def train_multi(name, dataframe, image_dir, eepochs=12, ft_epochs=12, patience=5
     FT_STOPPING_PATIENCE = ft_patience
     BATCH_SIZE=16
     loss_function = 'categorical_crossentropy'
+    table = pd.read_csv('t.csv', dtype=str)
+    table_shuffled = table.sample(frac=1)
 
+    test_sample_num = int(len(table) * .2)
+    test_sample = table_shuffled.sample(test_sample_num)
+    table = table_shuffled.drop(test_sample.index.values)
+
+
+    table['combined'] = table[['product', 'category']].values.tolist()
+    test_sample['combined'] = test_sample[['product', 'category']].values.tolist()
+    test_sample.to_csv('sample_shuffled_multi.csv')
+    table.to_csv('table_shuffled_multi.csv')
     datagen=tf.keras.preprocessing.image.ImageDataGenerator(rescale=1. / 255.)
     test_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1./255.)
     train_generator = datagen.flow_from_dataframe(
-        dataframe=dataframe[:2000],
+        dataframe=table[:2300],
         directory=image_dir,
         x_col="file name",
         y_col="combined",
-        batch_size=32,
+        batch_size=16,
         seed=42,
         shuffle=True,
         class_mode="categorical",
         target_size=(224, 224))
     valid_generator = test_datagen.flow_from_dataframe(
-        dataframe=dataframe[2000:2700],
+        dataframe=table[2300:],
         directory=image_dir,
         x_col="file name",
         y_col="combined",
-        batch_size=32,
+        batch_size=16,
         seed=42,
         shuffle=True,
         class_mode="categorical",
         target_size=(224, 224))
     test_generator = test_datagen.flow_from_dataframe(
-        dataframe=dataframe[:1800],
+        dataframe=test_sample,
         directory=image_dir,
         x_col="file name",
         y_col="combined",
@@ -317,7 +344,7 @@ def train_multi(name, dataframe, image_dir, eepochs=12, ft_epochs=12, patience=5
     output2 = Dense(1, activation='sigmoid')(x)
     model = Model(inp, [output1, output2])
     model.compile(optimizers.RMSprop(lr=0.0001, decay=1e-6),
-                  loss=["binary_crossentropy", "binary_crossentropy"], metrics=["acc", "val_loss"])
+                  loss=["binary_crossentropy", "binary_crossentropy"], metrics=["accuracy"])
 
     classes = train_generator.class_indices.keys()
     labels = '\n'.join(sorted(classes))
@@ -332,14 +359,14 @@ def train_multi(name, dataframe, image_dir, eepochs=12, ft_epochs=12, patience=5
     STEP_SIZE_TRAIN = train_generator.n // train_generator.batch_size
     STEP_SIZE_VALID = valid_generator.n // valid_generator.batch_size
     STEP_SIZE_TEST = test_generator.n // test_generator.batch_size
-    model.fit_generator(generator_wrapper(valid_generator), steps_per_epoch=STEP_SIZE_TRAIN,
+    model.fit_generator(generator_wrapper(train_generator), steps_per_epoch=STEP_SIZE_TRAIN,
                         validation_data = generator_wrapper(valid_generator), validation_steps = STEP_SIZE_VALID,
-                        epochs = 9, verbose = 2)
+                        epochs = 15, verbose = 2)
 
     test_generator.reset()
-    pred = model.predict_generator(valid_generator, steps = STEP_SIZE_TEST, verbose = 1)
-    tf.saved_model.save(model, 'multi_cat')
+    tf.saved_model.save(model, 'multi_cat2')
 
+"""for product, assumes that only itens of right category are inclided"""
 def compare_models(image_dir, test_sample, labels, prod_or_cat, model1, model2=None):
     products=[]
     categories=[]
@@ -372,19 +399,15 @@ def compare_models(image_dir, test_sample, labels, prod_or_cat, model1, model2=N
         pred_classes1.append(np.argmax(pred))
     right1 = 0
     for n in range(len(predictions1)):
-        print(len(labels))
-        print(len(sample_labels))
-        print(len(pred_classes1))
-
         if sample_labels[n] == labels[pred_classes1[n]]:
             right1 += 1
     acc1 = right1 / len(products)
 
     if model2 is None:
-        print('no old model found')
+        print('No old model given for comparison')
         acc2 = 100
     else:
-        print('old model found')
+        print('Old model given for comparison')
         predictions2 = model2.predict_generator(test_generator)
         pred_classes2 = []
         for pred in predictions2:
@@ -396,16 +419,17 @@ def compare_models(image_dir, test_sample, labels, prod_or_cat, model1, model2=N
                 right2 += 1
 
         acc2 = right2 / len(products)
-        print(acc1)
-        print(acc2)
-    return(acc1, acc2)
+    return acc1, acc2
+
 
 def copy_and_overwrite(from_path, to_path):
     if os.path.exists(to_path):
         shutil.rmtree(to_path)
     shutil.copytree(from_path, to_path)
 
+
 def check_labels_models(thing, models_dir, labels_dir):
+
     thing_model_dir = models_dir + '/' + thing
     thing_labels_path = labels_dir + '/' + thing + '/labels.txt'
     print(thing)
@@ -429,6 +453,3 @@ def check_labels_models(thing, models_dir, labels_dir):
 
     return model_exists and labels_loaded, unique_labels
 
-def log_and_print(message):
-    print(message)
-    logging.debug(message)
